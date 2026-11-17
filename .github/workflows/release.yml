@@ -1,0 +1,63 @@
+name: release
+
+# Builds Screenmit.exe and publishes a release when
+#   - the number in VERSION changes on main (the release tag is made for you), or
+#   - a tag like 0.2.0 is pushed.
+# Running it by hand only builds (the exe is in the run's artifacts).
+# Optional repository secrets bake in the Google sign-in, so users don't
+# need their own client JSON:
+#   GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_DESKTOP_CLIENT_SECRET
+on:
+  push:
+    branches: [main]
+    paths: [VERSION]
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Test
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build Screenmit.exe
+        env:
+          GCID: ${{ secrets.GOOGLE_DESKTOP_CLIENT_ID }}
+          GCSECRET: ${{ secrets.GOOGLE_DESKTOP_CLIENT_SECRET }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then VER="${GITHUB_REF_NAME#v}"; else VER="$(tr -d ' \r\n' < VERSION)"; fi
+          case "$VER" in [0-9]*) ;; *) VER="0.0.0-dev" ;; esac
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          python3 tools/mkres.py --syso-only "$VER"
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-H windowsgui -s -w -X main.Version=$VER -X main.googleClientID=$GCID -X main.googleClientSecret=$GCSECRET" \
+            -o Screenmit.exe .
+          python3 tools/check_pe.py Screenmit.exe
+          sha256sum Screenmit.exe > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Screenmit
+          path: |
+            Screenmit.exe
+            SHA256SUMS
+      - name: Publish the release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VER }}
+          target_commitish: ${{ github.sha }}
+          name: Screenmit ${{ env.VER }}
+          body_path: RELEASE_NOTES.md
+          prerelease: true
+          files: |
+            Screenmit.exe
+            SHA256SUMS

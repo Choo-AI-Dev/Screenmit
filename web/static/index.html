@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screenmit</title>
+<link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+<script src="/assets/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="/assets/icon.svg" alt=""><span>Screenmit</span></div>
+  <label class="search">
+    <span class="i" data-icon="search"></span>
+    <input id="q" type="search" placeholder="프로그램, 창 제목, 메모로 찾기" autocomplete="off" spellcheck="false">
+    <kbd>Ctrl F</kbd>
+  </label>
+  <div class="actions">
+    <button id="pauseBtn" class="pill" type="button" data-only="local"><span class="dot"></span><span class="label">모으는 중</span></button>
+    <button id="syncBtn" class="icon-btn" type="button" title="구글 드라이브" hidden><span class="i" data-icon="cloud"></span><span class="badge"></span></button>
+    <button id="folderBtn" class="icon-btn" type="button" title="저장 폴더 열기" data-only="local"><span class="i" data-icon="folder"></span></button>
+    <button id="settingsBtn" class="icon-btn" type="button" title="설정"><span class="i" data-icon="gear"></span></button>
+  </div>
+</header>
+
+<nav class="bar">
+  <div class="tabs" role="tablist">
+    <button class="tab on" data-tab="all" role="tab">전체 <span class="n" id="nAll">0</span></button>
+    <button class="tab" data-tab="kept" role="tab">보관함 <span class="n" id="nKept">0</span></button>
+  </div>
+  <div class="pcs" id="pcs" hidden></div>
+  <div class="summary" id="summary"></div>
+</nav>
+
+<div class="banner" id="banner" hidden></div>
+<main id="list" aria-live="polite"></main>
+
+<div class="viewer" id="viewer" hidden>
+  <div class="v-top">
+    <div class="v-info">
+      <div class="v-when" id="vWhen"></div>
+      <div class="v-src" id="vSrc"></div>
+    </div>
+    <div class="v-actions">
+      <button type="button" data-act="copy" title="복사 (Ctrl+C)"><span class="i" data-icon="copy"></span><span>복사</span></button>
+      <button type="button" data-act="pin" title="보관 (P)"><span class="i" data-icon="star"></span><span class="pin-label">보관</span></button>
+      <button type="button" data-act="note" title="메모 (M)"><span class="i" data-icon="note"></span><span>메모</span></button>
+      <button type="button" data-act="reveal" title="폴더에서 보기" data-only="local"><span class="i" data-icon="reveal"></span><span>폴더에서 보기</span></button>
+      <a class="btn" data-act="save" title="다른 이름으로 저장" download><span class="i" data-icon="download"></span><span>저장</span></a>
+      <button type="button" data-act="delete" title="삭제 (Delete)"><span class="i" data-icon="trash"></span><span>삭제</span></button>
+      <button type="button" class="v-close" data-act="close" title="닫기 (Esc)"><span class="i" data-icon="x"></span></button>
+    </div>
+  </div>
+  <button type="button" class="v-nav prev" data-act="prev" title="이전 (←)"><span class="i" data-icon="left"></span></button>
+  <div class="v-stage" id="vStage"><img id="vImg" alt=""><div class="v-loading" id="vLoading">원본 받는 중…</div></div>
+  <button type="button" class="v-nav next" data-act="next" title="다음 (→)"><span class="i" data-icon="right"></span></button>
+  <div class="v-bottom">
+    <span class="v-meta" id="vMeta"></span>
+    <div class="v-note" id="vNoteBox" hidden>
+      <textarea id="vNote" rows="1" maxlength="500" placeholder="메모 남기기 — 나중에 검색돼요 (Enter 저장)"></textarea>
+    </div>
+    <span class="v-pos" id="vPos"></span>
+  </div>
+</div>
+
+<div class="modal-bg" id="settings" hidden>
+  <section class="sheet" role="dialog" aria-labelledby="setTitle">
+    <header><h2 id="setTitle">설정</h2><button type="button" class="icon-btn" data-close title="닫기"><span class="i" data-icon="x"></span></button></header>
+    <div class="sheet-body">
+
+      <div data-only="web">
+        <h3>구글 계정</h3>
+        <div class="group">
+          <div class="row">
+            <div class="row-text"><b id="webEmail"></b><small>내 드라이브 ‘Screenmit’ 폴더를 이 브라우저에서 바로 읽어요. 서버를 거치지 않아요.</small></div>
+            <button type="button" class="btn" id="logoutBtn">로그아웃</button>
+          </div>
+          <div class="row">
+            <div class="row-text"><b>PC에서 모으기</b><small>스크린샷은 PC의 Screenmit 이 모아서 드라이브에 올려요.</small></div>
+            <div class="links"><a href="https://github.com/Choo-AI-Dev/Screenmit/releases/latest" target="_blank" rel="noopener">Screenmit 받기</a></div>
+          </div>
+        </div>
+      </div>
+
+      <div data-only="local">
+      <h3>다른 PC와 같이 보기</h3>
+      <div class="group" id="driveGroup"></div>
+      </div>
+
+      <h3>보관</h3>
+      <div class="group">
+        <div class="row">
+          <div class="row-text"><b>보관 기간</b><small id="retDesc">지난 스크린샷은 자동으로 지워져요. ★보관함에 넣은 건 지우지 않아요.</small></div>
+          <div class="seg" id="retention"></div>
+        </div>
+      </div>
+
+      <div data-only="local">
+      <h3>모으기</h3>
+      <div class="group">
+        <label class="row">
+          <div class="row-text"><b>표·문서 복사는 빼기</b><small>엑셀 셀이나 워드 글을 복사할 때 딸려오는 그림은 저장하지 않아요</small></div>
+          <input type="checkbox" class="switch" id="skipDocs">
+        </label>
+        <label class="row">
+          <div class="row-text"><b>저장할 때마다 알림</b><small>윈도우 알림으로 저장됐다고 알려 줘요</small></div>
+          <input type="checkbox" class="switch" id="notify">
+        </label>
+      </div>
+
+      <h3>실행</h3>
+      <div class="group">
+        <label class="row">
+          <div class="row-text"><b>컴퓨터를 켜면 자동으로 실행</b><small>꺼져 있으면 그동안 찍은 스크린샷은 모이지 않아요</small></div>
+          <input type="checkbox" class="switch" id="autostart">
+        </label>
+        <div class="row">
+          <div class="row-text"><b>갤러리 여는 단축키</b><small id="hotkeyMsg">어디서든 누르면 이 화면이 열려요</small></div>
+          <div class="hotkey">
+            <button type="button" class="key" id="hotkeyBtn"></button>
+            <button type="button" class="link" id="hotkeyOff">끄기</button>
+          </div>
+        </div>
+      </div>
+
+      <h3>저장 폴더</h3>
+      <div class="group">
+        <div class="row col">
+          <code id="folderPath"></code>
+          <div class="folder-edit" id="folderEdit" hidden>
+            <input type="text" id="folderInput" spellcheck="false">
+            <button type="button" class="btn primary" id="folderApply">바꾸기</button>
+            <button type="button" class="btn" id="folderCancel">취소</button>
+          </div>
+          <div class="row-buttons" id="folderButtons">
+            <button type="button" class="btn" id="folderOpen">폴더 열기</button>
+            <button type="button" class="btn" id="folderChange">다른 폴더로…</button>
+          </div>
+          <small class="err" id="folderErr"></small>
+        </div>
+      </div>
+      </div>
+
+      <h3>정보</h3>
+      <div class="group">
+        <div class="row" data-only="local">
+          <div class="row-text"><b>웹 주소로 보기</b><small>이 브라우저에서는 구글 로그인 없이도 이 PC 스크린샷이 보여요. 휴대폰·다른 PC는 구글 로그인으로 봐요.</small></div>
+          <div class="links"><a id="webLinkA" href="https://choo-ai-dev.github.io/Screenmit/" target="_blank" rel="noopener">웹에서 열기</a></div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>Screenmit <span id="ver"></span></b><small data-only="local">스크린샷은 이 PC와, 연결했다면 내 구글 드라이브에만 저장돼요.</small><small data-only="web">스크린샷은 내 PC들과 내 구글 드라이브에만 있어요.</small></div>
+          <div class="links">
+            <a href="https://github.com/Choo-AI-Dev/Screenmit" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/sponsors/Choo-AI-Dev" target="_blank" rel="noopener">후원하기</a>
+            <a href="https://choo-ai-dev.github.io/Screenmit/privacy.html" target="_blank" rel="noopener">개인정보처리방침</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="modal-bg" id="confirm" hidden>
+  <section class="dialog" role="alertdialog">
+    <p id="confirmMsg"></p>
+    <div class="dialog-buttons"><button type="button" class="btn" id="confirmNo">취소</button><button type="button" class="btn danger" id="confirmYes">지우기</button></div>
+  </section>
+</div>
+
+<div class="toast" id="toast" hidden><span id="toastMsg"></span><button type="button" id="toastAct" hidden></button></div>
+</body>
+</html>

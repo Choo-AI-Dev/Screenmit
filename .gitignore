@@ -1,0 +1,5 @@
+/Screenmit.exe
+/screenmit
+/dist/
+*.log
+node_modules/

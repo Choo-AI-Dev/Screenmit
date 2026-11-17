@@ -1,0 +1,47 @@
+name: pages
+
+# Publishes the web page (the same gallery, reading Google Drive directly):
+#   https://choo-ai-dev.github.io/Screenmit/
+# One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
+# Optional repository variable GOOGLE_WEB_CLIENT_ID (Settings → Secrets and
+# variables → Actions → Variables) bakes in the Google "Web application"
+# client id; without it the page asks for one and keeps it in the browser.
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'site/**', 'tools/build_site.py', 'VERSION', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the site
+        env:
+          # the Screenmit "Web application" client id (a public value, not the desktop one);
+          # a repository variable GOOGLE_WEB_CLIENT_ID overrides it
+          CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID || '1097795324078-hcepghto8c8bt1usufoumlj8jqcl7iim.apps.googleusercontent.com' }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          SITE_URL="https://$(echo "$OWNER" | tr 'A-Z' 'a-z').github.io/$REPO/"
+          python3 tools/build_site.py _site --client-id "$CLIENT_ID" --site-url "$SITE_URL"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
