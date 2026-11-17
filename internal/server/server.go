@@ -30,6 +30,8 @@ type SettingsPatch struct {
 	Autostart     *bool   `json:"autostart,omitempty"`
 	Notify        *bool   `json:"notify,omitempty"`
 	Hotkey        *string `json:"hotkey,omitempty"`
+	CaptureKey    *string `json:"captureKey,omitempty"`
+	CaptureMode   *string `json:"captureMode,omitempty"`
 	PCName        *string `json:"pcName,omitempty"`
 	Folder        *string `json:"folder,omitempty"`
 	Welcomed      *bool   `json:"welcomed,omitempty"`

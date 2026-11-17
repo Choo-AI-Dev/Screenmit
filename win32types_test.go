@@ -21,6 +21,8 @@ func TestWin32StructSizes(t *testing.T) {
 		{"GUID", unsafe.Sizeof(wGUID{}), 16},
 		{"POINT", unsafe.Sizeof(wPoint{}), 8},
 		{"DATA_BLOB", unsafe.Sizeof(wDataBlob{}), 16},
+		{"RECT", unsafe.Sizeof(wRect{}), 16},
+		{"BITMAPINFOHEADER", unsafe.Sizeof(wBitmapInfoHeader{}), 40},
 		{"WINHTTP_CURRENT_USER_IE_PROXY_CONFIG", unsafe.Sizeof(wIEProxyConfig{}), 32},
 		{"WINHTTP_AUTOPROXY_OPTIONS", unsafe.Sizeof(wAutoProxyOptions{}), 32},
 		{"WINHTTP_PROXY_INFO", unsafe.Sizeof(wProxyInfo{}), 24},

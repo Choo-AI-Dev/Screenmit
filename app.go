@@ -73,6 +73,13 @@ type Platform interface {
 	OpenPath(path string) error
 	SetAutostart(on bool) error
 	ApplyHotkey(spec string) error
+	// ApplyCaptureKey registers the screenshot key ("off" removes it).
+	ApplyCaptureKey(spec string) error
+	// StartRegionCapture opens Windows' own snipping overlay; the result
+	// arrives through the clipboard like any other capture.
+	StartRegionCapture() error
+	// Grab takes the screen (all monitors) or the window in front.
+	Grab(window bool) (Grab, error)
 	Notify(title, msg string)
 	UpdateTray(t TrayState)
 	TokenStore(dir string) drive.TokenStore
@@ -89,6 +96,14 @@ type TrayState struct {
 	Paused bool
 	Today  int
 	Drive  string // "", "ok", "error"
+}
+
+// Grab is a screenshot Screenmit took itself, and where it was taken.
+type Grab struct {
+	Img   image.Image
+	App   string
+	Exe   string
+	Title string
 }
 
 // Capture is one picture from the clipboard.
@@ -110,11 +125,12 @@ type App struct {
 	storeMu sync.RWMutex
 	store   *shots.Store
 
-	paused    atomic.Bool
-	hotkeyErr atomic.Value // string
-	capq      chan Capture
-	ctx       context.Context
-	cancel    context.CancelFunc
+	paused     atomic.Bool
+	hotkeyErr  atomic.Value // string
+	captureErr atomic.Value // string
+	capq       chan Capture
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	driveMu    sync.Mutex
 	creds      *drive.Credentials
@@ -162,6 +178,7 @@ func NewApp(plat Platform, o Options) (*App, error) {
 	a := &App{plat: plat, cfg: cfg, store: st, capq: make(chan Capture, 16), ctx: ctx, cancel: cancel,
 		httpClient: &http.Client{Timeout: 90 * time.Second, Transport: tr}}
 	a.hotkeyErr.Store("")
+	a.captureErr.Store("")
 	a.srv = server.New(a, c.Token, web.Files, webOrigins()...)
 	st.OnChange = a.changed
 
@@ -214,6 +231,9 @@ func (a *App) SetPaused(p bool) {
 
 // SetHotkeyError records whether the shortcut could be registered.
 func (a *App) SetHotkeyError(s string) { a.hotkeyErr.Store(s) }
+
+// SetCaptureKeyError records whether the screenshot key could be registered.
+func (a *App) SetCaptureKeyError(s string) { a.captureErr.Store(s) }
 
 func (a *App) changed() {
 	a.srv.Broadcast()
@@ -295,23 +315,77 @@ func (a *App) handleCapture(c Capture) {
 	if b := img.Bounds(); b.Dx() < 2 || b.Dy() < 2 {
 		return
 	}
+	a.save(pngData, img, c, false)
+}
+
+// save stores one picture. explicit is a screenshot taken with Screenmit's
+// own key: it always says so, since nothing else on screen does.
+func (a *App) save(pngData []byte, img image.Image, c Capture, explicit bool) {
 	sh, added, err := a.Store().Add(pngData, img, shots.Meta{Time: c.Time, App: shortApp(c.App), Exe: c.Exe, Title: c.Title, PC: a.PCName()})
 	if err != nil {
 		log.Printf("capture: save: %v", err)
+		if explicit {
+			a.plat.Notify("스크린샷을 저장하지 못했어요", err.Error())
+		}
 		return
 	}
+	cfg := a.cfg.Get()
 	if !added {
+		if explicit {
+			a.plat.Notify("스크린샷을 복사했어요", "똑같은 화면이 이미 저장돼 있어요")
+		}
 		return
 	}
 	log.Printf("saved %s %dx%d from %s", sh.File, sh.W, sh.H, c.Exe)
-	cfg := a.cfg.Get()
-	if !cfg.Welcomed {
+	switch {
+	case explicit:
+		if !cfg.Welcomed {
+			a.cfg.Update(func(c *config.Config) { c.Welcomed = true })
+		}
+		a.plat.Notify("스크린샷을 찍었어요", fmt.Sprintf("저장하고 복사해 뒀어요 · %s · %d×%d", nonEmpty(sh.App, "화면"), sh.W, sh.H))
+	case !cfg.Welcomed:
 		a.cfg.Update(func(c *config.Config) { c.Welcomed = true })
 		a.plat.Notify("스크린샷을 모으기 시작했어요", fmt.Sprintf("%d일 동안 보관해요. 트레이의 Screenmit 아이콘을 누르면 볼 수 있어요.", cfg.Retention()))
-	} else if cfg.Notify {
+	case cfg.Notify:
 		a.plat.Notify("스크린샷 저장", fmt.Sprintf("%s · %d×%d", nonEmpty(sh.App, "스크린샷"), sh.W, sh.H))
 	}
 	a.kickSync()
+}
+
+// TakeScreenshot is the screenshot key. "Region" hands over to Windows'
+// snipping overlay (its result comes back through the clipboard); the screen
+// and window modes take the picture here, copy it like Print Screen does,
+// and save it unless collecting is paused.
+func (a *App) TakeScreenshot() {
+	mode := a.cfg.Get().CaptureModeOr()
+	if mode == config.CaptureRegion {
+		err := a.plat.StartRegionCapture()
+		if err == nil {
+			return
+		}
+		log.Printf("region capture: %v; taking the whole screen", err)
+		mode = config.CaptureScreen
+	}
+	g, err := a.plat.Grab(mode == config.CaptureWindow)
+	if err != nil {
+		log.Printf("grab: %v", err)
+		a.plat.Notify("스크린샷을 찍지 못했어요", err.Error())
+		return
+	}
+	var buf bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := enc.Encode(&buf, g.Img); err != nil {
+		log.Printf("grab: encode: %v", err)
+		return
+	}
+	if err := a.plat.CopyImage(buf.Bytes(), g.Img); err != nil {
+		log.Printf("grab: copy: %v", err)
+	}
+	if a.Paused() {
+		a.plat.Notify("스크린샷을 복사했어요", "모으기를 멈춘 중이라 저장하지는 않았어요")
+		return
+	}
+	a.save(buf.Bytes(), g.Img, Capture{App: g.App, Exe: g.Exe, Title: g.Title, Time: time.Now()}, true)
 }
 
 // shortApp drops the vendor prefix ("Microsoft PowerPoint" -> "PowerPoint").
@@ -364,11 +438,14 @@ func (a *App) State() map[string]any {
 			"autostart":        c.AutostartOn(),
 			"notify":           c.Notify,
 			"hotkey":           c.HotkeySpec(),
+			"captureKey":       c.CaptureKeySpec(),
+			"captureMode":      c.CaptureModeOr(),
 			"pcName":           a.PCName(),
 			"folder":           a.Store().Root(),
 			"welcomed":         c.Welcomed,
 		},
-		"hotkeyError": a.hotkeyErr.Load(),
+		"hotkeyError":     a.hotkeyErr.Load(),
+		"captureKeyError": a.captureErr.Load(),
 		// Opening this link once lets the web page show this PC's
 		// screenshots without Google (the part after # never leaves the browser).
 		"webLink": fmt.Sprintf("%s#local=%d.%s", webURL(), a.srv.Port(), c.Token),
@@ -417,12 +494,43 @@ func (a *App) ApplySettings(p server.SettingsPatch) error {
 		if _, _, err := config.ParseHotkey(spec); err != nil {
 			return err
 		}
+		if config.SameKey(spec, a.cfg.Get().CaptureKeySpec()) {
+			return errors.New("스크린샷 찍는 단축키와 같아요. 다른 키를 골라 주세요")
+		}
 		if err := a.plat.ApplyHotkey(spec); err != nil {
 			// put the old one back
 			_ = a.plat.ApplyHotkey(a.cfg.Get().HotkeySpec())
 			return err
 		}
 		a.cfg.Update(func(c *config.Config) { c.Hotkey = spec })
+	}
+	if p.CaptureMode != nil {
+		ok := false
+		for _, m := range config.CaptureModes {
+			ok = ok || m == *p.CaptureMode
+		}
+		if !ok {
+			return errors.New("찍는 방식이 맞지 않아요")
+		}
+		a.cfg.Update(func(c *config.Config) { c.CaptureMode = *p.CaptureMode })
+	}
+	if p.CaptureKey != nil {
+		spec := strings.TrimSpace(*p.CaptureKey)
+		if strings.EqualFold(spec, "off") {
+			spec = ""
+		}
+		if _, _, err := config.ParseHotkey(spec); err != nil {
+			return err
+		}
+		if config.SameKey(spec, a.cfg.Get().HotkeySpec()) {
+			return errors.New("갤러리 여는 단축키와 같아요. 다른 키를 골라 주세요")
+		}
+		if err := a.plat.ApplyCaptureKey(nonEmpty(spec, "off")); err != nil {
+			_ = a.plat.ApplyCaptureKey(a.cfg.Get().CaptureKeySpec())
+			return err
+		}
+		a.SetCaptureKeyError("")
+		a.cfg.Update(func(c *config.Config) { c.CaptureKey = spec })
 	}
 	if p.PCName != nil {
 		name := strings.TrimSpace(*p.PCName)

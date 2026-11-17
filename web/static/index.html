@@ -78,7 +78,7 @@
           </div>
           <div class="row">
             <div class="row-text"><b>PC에서 모으기</b><small>스크린샷은 PC의 Screenmit 이 모아서 드라이브에 올려요.</small></div>
-            <div class="links"><a href="https://github.com/Choo-AI-Dev/Screenmit/releases/latest" target="_blank" rel="noopener">Screenmit 받기</a></div>
+            <div class="links"><a href="https://github.com/Choo-AI-Dev/Screenmit/releases" target="_blank" rel="noopener">Screenmit 받기</a></div>
           </div>
         </div>
       </div>
@@ -97,6 +97,21 @@
       </div>
 
       <div data-only="local">
+      <h3>스크린샷 찍기</h3>
+      <div class="group">
+        <div class="row">
+          <div class="row-text"><b>찍는 단축키</b><small id="captureMsg">Print Screen 말고 다른 키로도 찍어요</small></div>
+          <div class="hotkey">
+            <button type="button" class="key" id="captureBtn"></button>
+            <button type="button" class="link" id="captureOff">끄기</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="row-text"><b>찍는 방식</b><small id="captureModeDesc"></small></div>
+          <div class="seg" id="captureMode"></div>
+        </div>
+      </div>
+
       <h3>모으기</h3>
       <div class="group">
         <label class="row">

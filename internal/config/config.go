@@ -21,7 +21,9 @@ type Config struct {
 	SkipDocs      *bool  `json:"skipDocs,omitempty"`
 	Autostart     *bool  `json:"autostart,omitempty"`
 	Notify        bool   `json:"notify"`
-	Hotkey        string `json:"hotkey"` // "Ctrl+Alt+S", "" = default, "off"
+	Hotkey        string `json:"hotkey"`                // "Ctrl+Alt+S", "" = default, "off"
+	CaptureKey    string `json:"captureKey,omitempty"`  // takes a screenshot; "" = off
+	CaptureMode   string `json:"captureMode,omitempty"` // CaptureRegion (default), CaptureScreen, CaptureWindow
 	PCName        string `json:"pcName,omitempty"`
 	Port          int    `json:"port,omitempty"`
 	Token         string `json:"token"`
@@ -37,6 +39,32 @@ const (
 	DefaultHotkey    = "Ctrl+Alt+S"
 	DefaultPort      = 27839
 )
+
+// What the screenshot key does.
+const (
+	CaptureRegion = "region" // Windows' own snipping overlay (like Win + Shift + S)
+	CaptureScreen = "screen" // every monitor, saved and copied at once
+	CaptureWindow = "window" // the window in front, saved and copied at once
+)
+
+var CaptureModes = []string{CaptureRegion, CaptureScreen, CaptureWindow}
+
+// CaptureKeySpec is the screenshot key, or "off".
+func (c Config) CaptureKeySpec() string {
+	if strings.TrimSpace(c.CaptureKey) == "" {
+		return "off"
+	}
+	return c.CaptureKey
+}
+
+func (c Config) CaptureModeOr() string {
+	for _, m := range CaptureModes {
+		if c.CaptureMode == m {
+			return m
+		}
+	}
+	return CaptureRegion
+}
 
 func (c Config) Retention() int {
 	if c.RetentionDays <= 0 {
@@ -170,11 +198,37 @@ func ParseHotkey(spec string) (hk Hotkey, ok bool, err error) {
 	if hk.VK == 0 {
 		return Hotkey{}, false, errors.New("글자 키가 없어요")
 	}
-	isF := hk.VK >= 0x70 && hk.VK <= 0x7B
-	if hk.Mods&(ModControl|ModAlt|ModWin) == 0 && !isF {
+	if hk.Mods&(ModControl|ModAlt|ModWin) == 0 && !soloKey(hk.VK) {
 		return Hotkey{}, false, errors.New("Ctrl 이나 Alt 를 같이 눌러 주세요")
 	}
 	return hk, true, nil
+}
+
+// Keys that can be a shortcut on their own (and with Shift).
+var namedKeys = []struct {
+	name string
+	vk   uint32
+}{
+	{"PrintScreen", 0x2C}, {"Pause", 0x13}, {"ScrollLock", 0x91}, {"Insert", 0x2D},
+}
+
+func soloKey(vk uint32) bool {
+	if vk >= 0x70 && vk <= 0x87 { // F1–F24
+		return true
+	}
+	for _, k := range namedKeys {
+		if k.vk == vk {
+			return true
+		}
+	}
+	return false
+}
+
+// SameKey reports whether two shortcut texts are the same keys.
+func SameKey(a, b string) bool {
+	ha, oka, ea := ParseHotkey(a)
+	hb, okb, eb := ParseHotkey(b)
+	return oka && okb && ea == nil && eb == nil && ha == hb
 }
 
 func keyVK(k string) (uint32, error) {
@@ -182,9 +236,18 @@ func keyVK(k string) (uint32, error) {
 	if len(u) == 1 && (u[0] >= 'A' && u[0] <= 'Z' || u[0] >= '0' && u[0] <= '9') {
 		return uint32(u[0]), nil
 	}
+	for _, nk := range namedKeys {
+		if strings.EqualFold(strings.ReplaceAll(k, " ", ""), nk.name) {
+			return nk.vk, nil
+		}
+	}
+	switch strings.ToLower(strings.ReplaceAll(k, " ", "")) {
+	case "prtsc", "prtscn", "printscrn":
+		return 0x2C, nil
+	}
 	if strings.HasPrefix(u, "F") {
 		var n int
-		if _, err := fmt.Sscanf(u, "F%d", &n); err == nil && n >= 1 && n <= 12 {
+		if _, err := fmt.Sscanf(u, "F%d", &n); err == nil && n >= 1 && n <= 24 && fmt.Sprintf("F%d", n) == u {
 			return uint32(0x70 + n - 1), nil
 		}
 	}
@@ -206,11 +269,15 @@ func FormatHotkey(hk Hotkey) string {
 	if hk.Mods&ModWin != 0 {
 		p = append(p, "Win")
 	}
-	switch {
-	case hk.VK >= 0x70 && hk.VK <= 0x7B:
-		p = append(p, fmt.Sprintf("F%d", hk.VK-0x70+1))
-	default:
-		p = append(p, string(rune(hk.VK)))
+	name := string(rune(hk.VK))
+	if hk.VK >= 0x70 && hk.VK <= 0x87 {
+		name = fmt.Sprintf("F%d", hk.VK-0x70+1)
 	}
+	for _, nk := range namedKeys {
+		if nk.vk == hk.VK {
+			name = nk.name
+		}
+	}
+	p = append(p, name)
 	return strings.Join(p, "+")
 }

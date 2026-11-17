@@ -377,9 +377,17 @@ await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(docs, 'viewer.png') });
 await page.keyboard.press('Escape');
 
-// settings
+// settings, with a screenshot key picked
+await page.request.post(`${origin}/api/settings`, { headers: H, data: { captureKey: 'F9' } });
 await page.click('#settingsBtn');
 await page.waitForSelector('#settings:not([hidden])');
+await page.waitForFunction(() => document.querySelector('#captureBtn').textContent === 'F9');
+await page.evaluate(() => { // retention, the screenshot key and the gallery key together
+  const box = [...document.querySelectorAll('#settings *')].find((x) => x.scrollHeight > x.clientHeight + 20 && getComputedStyle(x).overflowY !== 'visible');
+  if (box) box.scrollTop = 345;
+  // the dev build runs on Linux: show the folder the way Windows would
+  document.querySelector('#folderPath').textContent = 'C:\\Users\\user\\Pictures\\Screenmit';
+});
 await page.waitForTimeout(300);
 await page.screenshot({ path: path.join(docs, 'settings.png') });
 await page.click('#settings [data-close]');

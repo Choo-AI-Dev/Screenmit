@@ -18,6 +18,8 @@ var (
 	versionD = syscall.NewLazyDLL("version.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 	crypt32  = syscall.NewLazyDLL("crypt32.dll")
+	gdi32    = syscall.NewLazyDLL("gdi32.dll")
+	dwmapi   = syscall.NewLazyDLL("dwmapi.dll")
 
 	pRegisterClassExW              = user32.NewProc("RegisterClassExW")
 	pCreateWindowExW               = user32.NewProc("CreateWindowExW")
@@ -93,6 +95,17 @@ var (
 	pCoTaskMemFree                 = ole32.NewProc("CoTaskMemFree")
 	pCryptProtectData              = crypt32.NewProc("CryptProtectData")
 	pCryptUnprotectData            = crypt32.NewProc("CryptUnprotectData")
+	pGetDC                         = user32.NewProc("GetDC")
+	pReleaseDC                     = user32.NewProc("ReleaseDC")
+	pGetWindowRect                 = user32.NewProc("GetWindowRect")
+	pCreateCompatibleDC            = gdi32.NewProc("CreateCompatibleDC")
+	pCreateDIBSection              = gdi32.NewProc("CreateDIBSection")
+	pSelectObject                  = gdi32.NewProc("SelectObject")
+	pBitBlt                        = gdi32.NewProc("BitBlt")
+	pDeleteObject                  = gdi32.NewProc("DeleteObject")
+	pDeleteDC                      = gdi32.NewProc("DeleteDC")
+	pGdiFlush                      = gdi32.NewProc("GdiFlush")
+	pDwmGetWindowAttribute         = dwmapi.NewProc("DwmGetWindowAttribute")
 )
 
 const (
@@ -137,7 +150,15 @@ const (
 	wineventOutOfContext   = 0x0000
 	wineventSkipOwnProcess = 0x0002
 
-	gmemMoveable = 0x0002
+	gmemMoveable             = 0x0002
+	smXVirtualScreen         = 76
+	smYVirtualScreen         = 77
+	smCxVirtualScreen        = 78
+	smCyVirtualScreen        = 79
+	srcCopy                  = 0x00CC0020
+	captureBlt               = 0x40000000
+	dwmwaExtendedFrameBounds = 9
+
 	smCxIcon     = 11
 	smCxSmIcon   = 49
 	swRestore    = 9

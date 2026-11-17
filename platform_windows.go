@@ -65,6 +65,7 @@ type winPlatform struct {
 	lastFg         winInfo
 	hook           uintptr
 	hotkeyOn       bool
+	captureOn      bool
 	lastLaunch     time.Time
 	descCache      map[string]string
 
@@ -188,6 +189,9 @@ func (p *winPlatform) Run(a *App) error {
 	if err := p.applyHotkey(cfg.HotkeySpec()); err != nil {
 		a.SetHotkeyError(fmt.Sprintf("%s 은(는) 다른 프로그램이 쓰고 있어요. 다른 단축키를 골라 주세요", hotkeyLabel(cfg.HotkeySpec())))
 	}
+	if err := p.applyCaptureKey(cfg.CaptureKeySpec()); err != nil {
+		a.SetCaptureKeyError(err.Error())
+	}
 	if err := p.SetAutostart(cfg.AutostartOn()); err != nil {
 		log.Printf("autostart: %v", err)
 	}
@@ -211,7 +215,10 @@ func (p *winPlatform) Run(a *App) error {
 		pUnhookWinEvent.Call(p.hook)
 	}
 	if p.hotkeyOn {
-		pUnregisterHotKey.Call(hwnd, 1)
+		pUnregisterHotKey.Call(hwnd, hotkeyGallery)
+	}
+	if p.captureOn {
+		pUnregisterHotKey.Call(hwnd, hotkeyCapture)
 	}
 	p.removeTray()
 	return nil
@@ -237,7 +244,14 @@ func wndProc(hwnd, msg, wp, lp uintptr) (ret uintptr) {
 			p.showMenu()
 		}
 		return 0
-	case wmHotkey, wmShowGallery:
+	case wmHotkey:
+		if wp == hotkeyCapture {
+			go p.app.TakeScreenshot()
+		} else {
+			p.openGallery()
+		}
+		return 0
+	case wmShowGallery:
 		p.openGallery()
 		return 0
 	case wmRunQueue:
@@ -714,7 +728,16 @@ func (p *winPlatform) SetAutostart(on bool) error {
 	return regSetRun("Screenmit", `"`+exe+`" --background`)
 }
 
-func hotkeyLabel(spec string) string { return strings.ReplaceAll(spec, "+", " + ") }
+// Hotkey ids for RegisterHotKey.
+const (
+	hotkeyGallery = 1
+	hotkeyCapture = 2
+)
+
+func hotkeyLabel(spec string) string {
+	r := strings.NewReplacer("+", " + ", "PrintScreen", "Print Screen", "ScrollLock", "Scroll Lock")
+	return r.Replace(spec)
+}
 
 func (p *winPlatform) ApplyHotkey(spec string) error {
 	var err error
@@ -727,18 +750,138 @@ func (p *winPlatform) ApplyHotkey(spec string) error {
 
 func (p *winPlatform) applyHotkey(spec string) error {
 	if p.hotkeyOn {
-		pUnregisterHotKey.Call(p.hwnd, 1)
+		pUnregisterHotKey.Call(p.hwnd, hotkeyGallery)
 		p.hotkeyOn = false
 	}
 	hk, ok, err := config.ParseHotkey(spec)
 	if err != nil || !ok {
 		return err
 	}
-	if r, _, _ := pRegisterHotKey.Call(p.hwnd, 1, uintptr(hk.Mods|modNoRepeat), uintptr(hk.VK)); r == 0 {
+	if r, _, _ := pRegisterHotKey.Call(p.hwnd, hotkeyGallery, uintptr(hk.Mods|modNoRepeat), uintptr(hk.VK)); r == 0 {
 		return fmt.Errorf("%s 은(는) 다른 프로그램이 쓰고 있어요", hotkeyLabel(spec))
 	}
 	p.hotkeyOn = true
 	return nil
+}
+
+func (p *winPlatform) ApplyCaptureKey(spec string) error {
+	var err error
+	p.onUI(func() { err = p.applyCaptureKey(spec) })
+	return err
+}
+
+func (p *winPlatform) applyCaptureKey(spec string) error {
+	if p.captureOn {
+		pUnregisterHotKey.Call(p.hwnd, hotkeyCapture)
+		p.captureOn = false
+	}
+	hk, ok, err := config.ParseHotkey(spec)
+	if err != nil || !ok {
+		return err
+	}
+	if r, _, _ := pRegisterHotKey.Call(p.hwnd, hotkeyCapture, uintptr(hk.Mods|modNoRepeat), uintptr(hk.VK)); r == 0 {
+		if hk.VK == 0x2C {
+			return errors.New("Print Screen 은 Windows 캡처 도구가 쓰고 있어요. Windows 설정 → 접근성 → 키보드에서 'Print Screen 키로 화면 캡처 열기'를 끄면 쓸 수 있어요")
+		}
+		return fmt.Errorf("%s 은(는) 다른 프로그램이 쓰고 있어요. 다른 키를 골라 주세요", hotkeyLabel(spec))
+	}
+	p.captureOn = true
+	return nil
+}
+
+// StartRegionCapture opens the snipping overlay, like Win + Shift + S.
+func (p *winPlatform) StartRegionCapture() error {
+	var err error
+	p.onUI(func() { err = shellOpen("ms-screenclip:") })
+	return err
+}
+
+// Grab copies the screen (every monitor) or the window in front from the
+// screen itself, the way Print Screen and Alt + Print Screen see it.
+func (p *winPlatform) Grab(window bool) (Grab, error) {
+	var g Grab
+	var err error
+	p.onUI(func() {
+		src := p.sourceWindow()
+		r := virtualScreen()
+		if window && src.hwnd != 0 {
+			if wr, ok := windowBounds(src.hwnd); ok {
+				if x := wr.Intersect(r); !x.Empty() {
+					r = x
+				}
+			}
+		}
+		var img *image.RGBA
+		if img, err = grabRect(r); err == nil {
+			g = Grab{Img: img, App: src.app, Exe: src.exe, Title: src.title}
+		}
+	})
+	if err == nil && g.Img == nil {
+		err = errors.New("화면을 읽지 못했어요")
+	}
+	return g, err
+}
+
+func metric(i uintptr) int {
+	r, _, _ := pGetSystemMetrics.Call(i)
+	return int(int32(r))
+}
+
+func virtualScreen() image.Rectangle {
+	x, y := metric(smXVirtualScreen), metric(smYVirtualScreen)
+	return image.Rect(x, y, x+metric(smCxVirtualScreen), y+metric(smCyVirtualScreen))
+}
+
+// windowBounds is the window as drawn, without the invisible resize border.
+func windowBounds(hwnd uintptr) (image.Rectangle, bool) {
+	if ic, _, _ := pIsIconic.Call(hwnd); ic != 0 {
+		return image.Rectangle{}, false
+	}
+	var rc wRect
+	if hr, _, _ := pDwmGetWindowAttribute.Call(hwnd, dwmwaExtendedFrameBounds, uintptr(unsafe.Pointer(&rc)), unsafe.Sizeof(rc)); hr != 0 {
+		if ok, _, _ := pGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rc))); ok == 0 {
+			return image.Rectangle{}, false
+		}
+	}
+	r := image.Rect(int(rc.Left), int(rc.Top), int(rc.Right), int(rc.Bottom))
+	return r, !r.Empty()
+}
+
+func grabRect(r image.Rectangle) (*image.RGBA, error) {
+	w, h := r.Dx(), r.Dy()
+	if w <= 0 || h <= 0 || w > 32767 || h > 32767 {
+		return nil, errors.New("화면 크기를 알 수 없어요")
+	}
+	sdc, _, _ := pGetDC.Call(0)
+	if sdc == 0 {
+		return nil, errors.New("화면을 읽을 수 없어요")
+	}
+	defer pReleaseDC.Call(0, sdc)
+	mdc, _, _ := pCreateCompatibleDC.Call(sdc)
+	if mdc == 0 {
+		return nil, errors.New("화면을 읽을 수 없어요")
+	}
+	defer pDeleteDC.Call(mdc)
+	bi := wBitmapInfoHeader{Width: int32(w), Height: -int32(h), Planes: 1, BitCount: 32}
+	bi.Size = uint32(unsafe.Sizeof(bi))
+	var bits unsafe.Pointer
+	hbm, _, _ := pCreateDIBSection.Call(sdc, uintptr(unsafe.Pointer(&bi)), 0, uintptr(unsafe.Pointer(&bits)), 0, 0)
+	if hbm == 0 || bits == nil {
+		return nil, errors.New("메모리가 모자라요")
+	}
+	defer pDeleteObject.Call(hbm)
+	old, _, _ := pSelectObject.Call(mdc, hbm)
+	defer pSelectObject.Call(mdc, old)
+	if ok, _, e := pBitBlt.Call(mdc, 0, 0, uintptr(w), uintptr(h), sdc, uintptr(r.Min.X), uintptr(r.Min.Y), srcCopy|captureBlt); ok == 0 {
+		return nil, fmt.Errorf("화면을 읽지 못했어요: %v", e)
+	}
+	pGdiFlush.Call()
+	src := unsafe.Slice((*byte)(bits), w*h*4)
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i+3 < len(src); i += 4 { // BGRA → RGBA, opaque
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = src[i+2], src[i+1], src[i], 255
+	}
+	return img, nil
 }
 
 func (p *winPlatform) TokenStore(dir string) drive.TokenStore {

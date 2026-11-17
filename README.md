@@ -27,7 +27,7 @@ PC에서 스크린샷을 자주 찍어 써요. 표 하나, 오류 창 하나, �
 
 | 크게 보기 | 설정 |
 |---|---|
-| ![보기 화면: 슬라이드 스크린샷과 메모](docs/viewer.png) | ![설정: 구글 드라이브, 보관 기간, 모으기](docs/settings.png) |
+| ![보기 화면: 슬라이드 스크린샷과 메모](docs/viewer.png) | ![설정: 보관 기간, 스크린샷 찍는 단축키와 방식, 모으기, 실행](docs/settings.png) |
 
 ## 쓰는 법
 
@@ -44,6 +44,7 @@ PC에서 스크린샷을 자주 찍어 써요. 표 하나, 오류 창 하나, �
 | 찾기 | `Ctrl + F` |
 | 다른 앱으로 | 썸네일을 끌어다 놓기 |
 
+- **다른 키로 찍기:** 설정 → **스크린샷 찍기** 에서 단축키를 정하면 Print Screen 대신 그 키로 찍어요 (예: `F9`, `Ctrl + Shift + A`, `Pause`). 찍는 방식은 **영역 선택**(Win + Shift + S 와 같은 Windows 캡처 도구), **전체 화면**, **지금 창** 중에서 골라요. 전체 화면과 지금 창은 누르는 순간 저장하고 클립보드에도 복사해 둬요.
 - 비밀번호처럼 남기기 싫은 걸 캡처할 땐 위쪽 **모으는 중** 을 눌러 잠깐 멈춰요. 비밀번호 관리자가 "기록하지 말라"고 표시한 복사는 처음부터 저장하지 않아요.
 - 엑셀 셀이나 워드 글을 복사할 때 딸려오는 그림은 저장하지 않아요 (설정에서 끌 수 있어요).
 - 업데이트: 트레이 아이콘 → 끝내기 후 새 exe 로 바꿔 실행하면 돼요. 모은 스크린샷과 설정은 그대로예요.
@@ -166,6 +167,7 @@ The interface is in Korean.
 1. Download `Screenmit.exe` from [Releases](../../releases), put it anywhere and run it. If Windows SmartScreen appears, choose **More info → Run anyway** (the exe isn't code-signed).
 2. A tray icon appears. From now on, screenshots are collected.
 3. Click the tray icon or press `Ctrl + Alt + S` to open the gallery. Copy again, star (`P`), add a note (`M`), delete (`Delete`, undo within 5 seconds), search (`Ctrl + F`), or drag a thumbnail into another app.
+4. Want a different screenshot key than Print Screen? Settings → **스크린샷 찍기** lets you pick one (`F9`, `Ctrl + Shift + A`, `Pause`…) and what it does: pick a region with Windows' snipping overlay, take every screen, or take the window in front. The last two save and copy the picture the moment you press the key.
 
 To see screenshots on another PC, create a Google OAuth **desktop** client once ([steps above](#구글-앱-만들기): a Google Cloud project with the Drive API and the `drive.file` scope, published), then in Settings → **다른 PC와 같이 보기** drop its JSON file, name the PC and press **연결** (Connect). Do the same on the other PC with the same JSON and Google account.
 

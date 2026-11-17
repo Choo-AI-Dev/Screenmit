@@ -73,7 +73,13 @@ function expireText(n) {
   if (n === 2) return { t: '내일까지 보관', soon: true };
   return { t: '오늘까지 보관', soon: true };
 }
-function hotkeyText(s) { return !s || s === 'off' ? '꺼짐' : s.split('+').join(' + '); }
+function keyName(s) { return s.split('+').map((k) => ({ PrintScreen: 'Print Screen', ScrollLock: 'Scroll Lock' }[k] || k)).join(' + '); }
+function hotkeyText(s) { return !s || s === 'off' ? '꺼짐' : keyName(s); }
+const CAPTURE_MODES = [
+  ['region', '영역 선택', '찍을 곳을 골라요 (Win + Shift + S 와 같아요)'],
+  ['screen', '전체 화면', '모든 모니터를 바로 찍어서 저장하고 복사해요'],
+  ['window', '지금 창', '앞에 있는 창만 바로 찍어서 저장하고 복사해요'],
+];
 
 // ---------- state ----------
 const S = {
@@ -282,9 +288,10 @@ function emptyHTML() {
     return `<div class="empty"><div class="art">${artSvg()}</div>
     <h2>드라이브에 아직 스크린샷이 없어요</h2>
     <p>PC에서 Screenmit 을 실행하고 설정 → 다른 PC와 같이 보기에서 이 구글 계정으로 연결하면,<br>찍은 스크린샷이 여기에 보여요.</p>
-    <p class="hint"><a href="https://github.com/Choo-AI-Dev/Screenmit/releases/latest" target="_blank" rel="noopener">PC용 Screenmit 받기</a></p></div>`;
+    <p class="hint"><a href="https://github.com/Choo-AI-Dev/Screenmit/releases" target="_blank" rel="noopener">PC용 Screenmit 받기</a></p></div>`;
   }
-  const hk = d.settings.hotkey && d.settings.hotkey !== 'off' ? `<p class="hint">이 화면은 <kbd>${esc(hotkeyText(d.settings.hotkey))}</kbd> 로 언제든 열 수 있어요.</p>` : '';
+  const hk = (d.settings.hotkey && d.settings.hotkey !== 'off' ? `<p class="hint">이 화면은 <kbd>${esc(hotkeyText(d.settings.hotkey))}</kbd> 로 언제든 열 수 있어요.</p>` : '')
+    + (d.settings.captureKey && d.settings.captureKey !== 'off' ? `<p class="hint">스크린샷은 <kbd>${esc(keyName(d.settings.captureKey))}</kbd> 로도 찍어요.</p>` : '');
   const drive = d.drive.on ? '' : `<p class="hint">다른 PC에서도 보려면 <button id="emptyDrive">설정 → 구글 드라이브 연결</button></p>`;
   return `<div class="empty"><div class="art">${artSvg()}</div>
     <h2>아직 모인 스크린샷이 없어요</h2>
@@ -622,11 +629,21 @@ function renderSettings(full) {
   $('#skipDocs').checked = st.skipDocs;
   $('#notify').checked = st.notify;
   $('#autostart').checked = st.autostart;
-  if (!S.listening) $('#hotkeyBtn').textContent = hotkeyText(st.hotkey);
+  if (S.listening !== 'hotkey') $('#hotkeyBtn').textContent = hotkeyText(st.hotkey);
   $('#hotkeyOff').hidden = st.hotkey === 'off';
   const hm = $('#hotkeyMsg');
   hm.textContent = d.hotkeyError ? d.hotkeyError : '어디서든 누르면 이 화면이 열려요';
   hm.className = d.hotkeyError ? 'err' : '';
+  const ck = st.captureKey || 'off';
+  if (S.listening !== 'capture') $('#captureBtn').textContent = ck === 'off' ? '키 정하기' : keyName(ck);
+  $('#captureOff').hidden = ck === 'off';
+  const cm = $('#captureMsg');
+  cm.textContent = d.captureKeyError || (ck === 'off' ? 'Print Screen 말고 다른 키로도 찍어요'
+    : ck.includes('PrintScreen') ? 'Windows 설정의 "Print Screen 키로 화면 캡처 열기"는 꺼 두세요' : '어디서든 누르면 바로 찍어요');
+  cm.className = d.captureKeyError ? 'err' : '';
+  const mode = st.captureMode || 'region';
+  $('#captureMode').innerHTML = CAPTURE_MODES.map(([m, label]) => `<button type="button" data-mode="${m}" class="${m === mode ? 'on' : ''}">${label}</button>`).join('');
+  $('#captureModeDesc').textContent = (CAPTURE_MODES.find((x) => x[0] === mode) || CAPTURE_MODES[0])[2];
   if ($('#folderEdit').hidden) $('#folderPath').textContent = st.folder;
   if (WEB) {
     const inG = !!(B.loggedIn && B.loggedIn());
@@ -739,8 +756,15 @@ $('#settings').addEventListener('click', async (e) => {
   }
   if (t.id === 'folderCancel') endFolderEdit();
   if (t.id === 'folderApply') applyFolder();
-  if (t.id === 'hotkeyBtn') startHotkeyListen();
+  if (t.id === 'hotkeyBtn') startHotkeyListen('hotkey');
   if (t.id === 'hotkeyOff') setSetting({ hotkey: 'off' }, '단축키를 껐어요');
+  if (t.id === 'captureBtn') startHotkeyListen('capture');
+  if (t.id === 'captureOff') setSetting({ captureKey: 'off' }, '스크린샷 단축키를 껐어요');
+  const mode = t.closest('[data-mode]');
+  if (mode) {
+    const m = CAPTURE_MODES.find((x) => x[0] === mode.dataset.mode);
+    if (m) setSetting({ captureMode: m[0] }, `찍는 방식: ${m[1]}`);
+  }
 });
 $('#settings').addEventListener('change', (e) => {
   const t = e.target;
@@ -776,23 +800,27 @@ async function applyFolder() {
   catch (e) { $('#folderErr').textContent = e.message; }
 }
 
-function startHotkeyListen() {
-  S.listening = true;
-  const b = $('#hotkeyBtn');
+const KEY_BTN = { hotkey: '#hotkeyBtn', capture: '#captureBtn' };
+function startHotkeyListen(which) {
+  stopHotkeyListen();
+  S.listening = which;
+  const b = $(KEY_BTN[which]);
   b.classList.add('listening');
   b.textContent = '새 단축키를 누르세요…';
 }
 function stopHotkeyListen() {
-  if (!S.listening) return;
+  const which = S.listening;
+  if (!which) return;
   S.listening = false;
-  $('#hotkeyBtn').classList.remove('listening');
-  $('#hotkeyBtn').textContent = hotkeyText(S.data.settings.hotkey);
+  $(KEY_BTN[which]).classList.remove('listening');
+  renderSettings();
 }
 function keySpec(e) {
   let k = '';
   if (/^Key[A-Z]$/.test(e.code)) k = e.code.slice(3);
   else if (/^Digit\d$/.test(e.code)) k = e.code.slice(5);
-  else if (/^F([1-9]|1[0-2])$/.test(e.code)) k = e.code;
+  else if (/^F([1-9]|1\d|2[0-4])$/.test(e.code)) k = e.code;
+  else if (['PrintScreen', 'Pause', 'ScrollLock', 'Insert'].includes(e.code)) k = e.code;
   if (!k) return '';
   const mods = [];
   if (e.ctrlKey) mods.push('Ctrl');
@@ -801,19 +829,28 @@ function keySpec(e) {
   if (e.metaKey) mods.push('Win');
   return [...mods, k].join('+');
 }
+// F keys, Print Screen, Pause, Scroll Lock and Insert work without Ctrl or Alt.
+function soloKey(spec) { return /(^|\+)(F\d+|PrintScreen|Pause|ScrollLock|Insert)$/.test(spec); }
+function takeKey(e) {
+  const which = S.listening;
+  e.preventDefault();
+  if (e.key === 'Escape') { stopHotkeyListen(); return; }
+  const spec = keySpec(e);
+  if (!spec) return;
+  if (!e.ctrlKey && !e.altKey && !e.metaKey && !soloKey(spec)) {
+    $(KEY_BTN[which]).textContent = 'Ctrl 이나 Alt 와 같이 눌러 주세요'; return;
+  }
+  stopHotkeyListen();
+  if (which === 'capture') setSetting({ captureKey: spec }, `이제 ${keyName(spec)} 로 스크린샷을 찍어요`);
+  else setSetting({ hotkey: spec }, `단축키: ${hotkeyText(spec)}`);
+}
+// Windows browsers only report Print Screen when it is let go.
+document.addEventListener('keyup', (e) => { if (S.listening && e.code === 'PrintScreen') takeKey(e); });
 
 // ---------- keyboard ----------
 document.addEventListener('keydown', (e) => {
   if (S.listening) {
-    e.preventDefault();
-    if (e.key === 'Escape') { stopHotkeyListen(); return; }
-    const spec = keySpec(e);
-    if (!spec) return;
-    if (!e.ctrlKey && !e.altKey && !e.metaKey && !spec.startsWith('F') && !spec.includes('+F')) {
-      $('#hotkeyBtn').textContent = 'Ctrl 이나 Alt 와 같이 눌러 주세요'; return;
-    }
-    stopHotkeyListen();
-    setSetting({ hotkey: spec }, `단축키: ${hotkeyText(spec)}`);
+    if (e.code !== 'PrintScreen') takeKey(e);
     return;
   }
   if (!$('#confirm').hidden) {

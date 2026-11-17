@@ -241,6 +241,70 @@ assert.match(await page.getAttribute('#webLinkA', 'href'), new RegExp(`^https://
 await page.screenshot({ path: `${out}/6b-drive-down-settings.png` });
 await page.click('#settings [data-close]');
 
+// screenshot key: off at first; pick one in the settings, then press it
+const platNow = async () => (await page.request.get(`${origin}/api/dev/platform`)).json();
+const stateNow = async () => (await page.request.get(`${origin}/api/state`)).json();
+const pressKey = () => page.request.post(`${origin}/api/dev/screenshot-key`, { headers: H });
+await page.click('#settingsBtn');
+await page.waitForSelector('#settings:not([hidden])');
+assert.equal(await page.textContent('#captureBtn'), '키 정하기');
+assert.equal(await page.textContent('#captureMode .on'), '영역 선택');
+assert.ok(await page.isHidden('#captureOff'));
+// the gallery's own key can't be used twice
+await page.click('#captureBtn');
+await page.keyboard.press('Control+Shift+Alt+KeyQ');
+await page.waitForFunction(() => /갤러리 여는 단축키와 같아요/.test(document.querySelector('#toastMsg').textContent));
+// a letter alone needs Ctrl or Alt; F keys don't
+await page.click('#captureBtn');
+await page.keyboard.press('KeyK');
+assert.match(await page.textContent('#captureBtn'), /Ctrl 이나 Alt/);
+await page.keyboard.press('F9');
+await page.waitForFunction(() => document.querySelector('#captureBtn').textContent === 'F9');
+assert.equal((await platNow()).captureKey, 'F9');
+// Print Screen only shows up when it is let go
+await page.click('#captureBtn');
+await page.keyboard.up('PrintScreen');
+await page.waitForFunction(() => document.querySelector('#captureBtn').textContent === 'Print Screen');
+assert.equal((await platNow()).captureKey, 'PrintScreen');
+assert.match(await page.textContent('#captureMsg'), /Print Screen 키로 화면 캡처 열기/);
+// "영역 선택" hands over to Windows' snipping overlay
+const before = (await stateNow()).shots.length;
+await pressKey();
+plat = await platNow();
+assert.equal(plat.regions, 1);
+assert.equal(plat.grabs, 0);
+// "지금 창": taken here, saved and copied at once
+await page.click('#captureMode button[data-mode="window"]');
+await page.waitForFunction(() => document.querySelector('#captureMode .on')?.textContent === '지금 창');
+assert.match(await page.textContent('#captureModeDesc'), /앞에 있는 창/);
+const copied0 = plat.copied;
+await pressKey();
+plat = await platNow();
+assert.equal(plat.grabs, 1);
+assert.equal(plat.copied, copied0 + 1, 'copied like Print Screen');
+assert.ok(plat.notes.includes('스크린샷을 찍었어요'), plat.notes.join());
+st = await stateNow();
+assert.equal(st.shots.length, before + 1);
+const taken = st.shots.find((x) => x.title === '가계부 1.xlsx - Excel');
+assert.ok(taken && taken.app === 'Excel' && taken.w === 900, JSON.stringify(taken));
+assert.equal(st.settings.captureMode, 'window');
+// paused: still copied, not saved
+await page.request.post(`${origin}/api/pause`, { headers: H, data: { paused: true } });
+await pressKey();
+plat = await platNow();
+assert.equal(plat.copied, copied0 + 2);
+assert.equal((await stateNow()).shots.length, before + 1);
+assert.equal(plat.notes[plat.notes.length - 1], '스크린샷을 복사했어요');
+await page.request.post(`${origin}/api/pause`, { headers: H, data: { paused: false } });
+await page.waitForSelector('#pauseBtn:not(.paused)');
+await page.screenshot({ path: `${out}/6c-capture-key.png` });
+// off again
+await page.click('#captureOff');
+await page.waitForFunction(() => document.querySelector('#captureBtn').textContent === '키 정하기');
+assert.equal((await platNow()).captureKey, 'off');
+await page.click('#settings [data-close]');
+await page.waitForSelector('.card:has-text("가계부 1.xlsx")', { timeout: 5000 });
+
 // dark mode
 await page.emulateMedia({ colorScheme: 'dark' });
 await page.screenshot({ path: `${out}/7-dark.png` });
@@ -263,9 +327,9 @@ assert.equal(rebinding.status(), 403);
 await page.setViewportSize({ width: 420, height: 860 });
 await page.screenshot({ path: `${out}/8-narrow.png` });
 
-// the one 400 is the shortcut conflict tried on purpose above
+// the 400s are the two shortcut conflicts tried on purpose above
 assert.deepEqual(errors.filter((e) => !/status of 400/.test(e)), [], 'console errors');
-assert.ok(errors.length <= 1, errors.join('\n'));
+assert.ok(errors.length <= 2, errors.join('\n'));
 await browser.close();
 proc.kill('SIGINT');
 console.log('E2E OK');

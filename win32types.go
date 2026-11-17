@@ -56,6 +56,23 @@ type wNotifyIconData struct {
 	BalloonIcon      uintptr
 }
 
+type wRect struct{ Left, Top, Right, Bottom int32 }
+
+// BITMAPINFOHEADER (enough for a 32-bit BI_RGB DIB section).
+type wBitmapInfoHeader struct {
+	Size          uint32
+	Width         int32
+	Height        int32
+	Planes        uint16
+	BitCount      uint16
+	Compression   uint32
+	SizeImage     uint32
+	XPelsPerMeter int32
+	YPelsPerMeter int32
+	ClrUsed       uint32
+	ClrImportant  uint32
+}
+
 // DATA_BLOB for DPAPI.
 type wDataBlob struct {
 	Size uint32

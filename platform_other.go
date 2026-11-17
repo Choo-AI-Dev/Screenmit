@@ -43,14 +43,17 @@ type devPlatform struct {
 	quit chan struct{}
 	once sync.Once
 
-	mu        sync.Mutex
-	copied    int
-	lastURL   string
-	autostart bool
-	hotkey    string
-	notes     []string
-	fake      *fakedrive.Server
-	fakeURL   string
+	mu         sync.Mutex
+	copied     int
+	lastURL    string
+	autostart  bool
+	hotkey     string
+	captureKey string
+	regions    int // region captures started
+	grabs      int
+	notes      []string
+	fake       *fakedrive.Server
+	fakeURL    string
 }
 
 func newPlatform() Platform { return &devPlatform{quit: make(chan struct{})} }
@@ -84,6 +87,9 @@ func (p *devPlatform) Run(a *App) error {
 		p.startFakeDrive(a)
 	}
 	p.devRoutes(a)
+	if err := p.ApplyCaptureKey(a.Config().CaptureKeySpec()); err != nil {
+		a.SetCaptureKeyError(err.Error())
+	}
 	fmt.Printf("GALLERY %s\n", a.GalleryURL())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -141,6 +147,44 @@ func (p *devPlatform) ApplyHotkey(spec string) error {
 	p.hotkey = spec
 	p.mu.Unlock()
 	return nil
+}
+
+func (p *devPlatform) ApplyCaptureKey(spec string) error {
+	if strings.EqualFold(spec, "Ctrl+Alt+X") {
+		return errors.New("다른 프로그램이 이 단축키를 쓰고 있어요")
+	}
+	p.mu.Lock()
+	p.captureKey = spec
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *devPlatform) StartRegionCapture() error {
+	p.mu.Lock()
+	p.regions++
+	p.mu.Unlock()
+	log.Printf("region capture started")
+	return nil
+}
+
+// Grab draws a different picture each time: a fake desktop with a window.
+func (p *devPlatform) Grab(window bool) (Grab, error) {
+	p.mu.Lock()
+	p.grabs++
+	n := p.grabs
+	p.mu.Unlock()
+	w, h := 1280, 720
+	if window {
+		w, h = 900, 600
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			i := img.PixOffset(x, y)
+			img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = uint8(40+x*n%160), uint8(90+y%120), 200, 255
+		}
+	}
+	return Grab{Img: img, App: "Microsoft Excel", Exe: "EXCEL.EXE", Title: fmt.Sprintf("가계부 %d.xlsx - Excel", n)}, nil
 }
 
 func (p *devPlatform) Notify(title, msg string) {
@@ -229,7 +273,13 @@ func (p *devPlatform) devRoutes(a *App) {
 	srv.Handle("GET /api/dev/platform", func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		writeDevJSON(w, map[string]any{"copied": p.copied, "lastURL": p.lastURL, "autostart": p.autostart, "hotkey": p.hotkey, "notes": p.notes})
+		writeDevJSON(w, map[string]any{"copied": p.copied, "lastURL": p.lastURL, "autostart": p.autostart, "hotkey": p.hotkey,
+			"captureKey": p.captureKey, "regions": p.regions, "grabs": p.grabs, "notes": p.notes})
+	})
+	// Pressing the screenshot key.
+	srv.Handle("POST /api/dev/screenshot-key", func(w http.ResponseWriter, r *http.Request) {
+		a.TakeScreenshot()
+		writeDevJSON(w, map[string]any{"ok": true})
 	})
 	srv.Handle("GET /api/dev/fake-client", func(w http.ResponseWriter, r *http.Request) {
 		b, err := os.ReadFile(filepath.Join(a.cfg.Dir(), "fake-client.json"))
